@@ -25,3 +25,16 @@ Enterprise-grade Active Directory multi-domain authentication, dynamic role mapp
 1. Clone or download this repository into your `/wp-content/plugins/` directory:
    ```bash
    git clone [https://github.com/sanchshevchuk/active-directory-multi-domain-auth-acl.git](https://github.com/sanchshevchuk/active-directory-multi-domain-auth-acl.git)
+Activate the plugin via WordPress Admin -> Plugins.
+
+Navigate to Settings -> AD Auth Settings to configure your Domain Controllers and Group Mappings.
+
+Security & Architecture
+Input Sanitization & Escaping: Built adhering to strict WordPress Coding Standards (wp_unslash, strict nonces, and output escaping).
+
+i18n Ready: Fully internationalized with native text domain support (active-directory-multi-domain-auth-acl).
+
+Single Source of Truth (SSOT): Option to overwrite WordPress user roles dynamically upon every successful AD login.
+
+License
+This project is licensed under the GPLv2 or later - see the LICENSE file for details.
