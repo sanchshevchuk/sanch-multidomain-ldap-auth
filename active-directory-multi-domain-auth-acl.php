@@ -1,12 +1,12 @@
 <?php
 /**
- * Plugin Name:       Active Directory Multi-Domain Auth & ACL
- * Description:       Ultimate Enterprise AD Integration: Zero-Trust ACL, Smart Tree Routing, Loop/Search Leak Protection, LDAP Clone Guard, and Role Cap Merge.
+ * Plugin Name:       Sanch MultiDomain LDAP Auth for Active Directory
+ * Description:       Enterprise AD Integration: Zero-Trust ACL, Smart Tree Routing, Loop/Search Leak Protection, LDAP Clone Guard, and Role Cap Merge.
  * Version:           1.0.0
  * Author:            sanchshevchuk
  * License:           GPL v2 or later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
- * Text Domain:       active-directory-multi-domain-auth-acl
+ * Text Domain:       sanch-multidomain-ldap-auth
  * Requires at least: 5.8
  * Requires PHP:      7.4
  */
@@ -62,7 +62,7 @@ function ad_multidomain_authenticate($user, $username, $password) {
 
     if (!function_exists('ldap_connect')) {
         error_log("[AD Auth Critical] LDAP extension missing. Check PHP configuration.");
-        return new WP_Error('ad_auth_no_ldap', __('<b>Server Error:</b> LDAP extension is not installed.', 'ad-multidomain-auth'));
+        return new WP_Error('ad_auth_no_ldap', __('<b>Server Error:</b> LDAP extension is not installed.', 'sanch-multidomain-ldap-auth'));
     }
 
     $options = get_option('ad_auth_settings', []);
@@ -176,7 +176,7 @@ function ad_multidomain_authenticate($user, $username, $password) {
                 if ($count > 1) {
                     error_log("[AD Auth Critical] Multiple records found for {$clean_username} on {$ip_clean}. Authentication aborted to prevent privilege escalation.");
                     @ldap_unbind($ldap_conn);
-                    return new WP_Error('ad_auth_multiple', __('<b>Access Denied:</b> Multiple AD accounts match this username. Contact administrator to refine Base DN.', 'ad-multidomain-auth'));
+                    return new WP_Error('ad_auth_multiple', __('<b>Access Denied:</b> Multiple AD accounts match this username. Contact administrator to refine Base DN.', 'sanch-multidomain-ldap-auth'));
                 }
 
                 if ($count === 1) {
@@ -190,7 +190,7 @@ function ad_multidomain_authenticate($user, $username, $password) {
                                 $unix_expires = ($expires / 10000000) - 11644473600;
                                 if (time() > $unix_expires) {
                                     @ldap_unbind($ldap_conn);
-                                    return new WP_Error('ad_auth_expired', __('<b>Access Denied:</b> Your Active Directory account has expired.', 'ad-multidomain-auth'));
+                                    return new WP_Error('ad_auth_expired', __('<b>Access Denied:</b> Your Active Directory account has expired.', 'sanch-multidomain-ldap-auth'));
                                 }
                             }
                         }
@@ -237,8 +237,11 @@ function ad_multidomain_authenticate($user, $username, $password) {
             @ldap_unbind($ldap_conn);
             break; 
         } else {
+            // SEC-GUARD: Validate IP before writing to error_log to prevent log injection
+            $raw_ip    = $_SERVER['REMOTE_ADDR'] ?? '';
+            $client_ip = filter_var($raw_ip, FILTER_VALIDATE_IP) ? $raw_ip : 'UNKNOWN';
+
             if (ldap_errno($ldap_conn) === 49) {
-                $client_ip = $_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN';
                 error_log("[AD Auth Audit] ❌ Failed login attempt (Invalid password): {$upn} from IP {$client_ip}");
             } else {
                 error_log("[AD Auth Error] Bind failed on {$ip_clean} ({$upn}): " . ldap_error($ldap_conn));
@@ -249,11 +252,11 @@ function ad_multidomain_authenticate($user, $username, $password) {
     }
 
     if (!$auth_success) {
-        return new WP_Error('ad_auth_failed', __('<b>Login Error:</b> Invalid domain username or password.', 'ad-multidomain-auth'));
+        return new WP_Error('ad_auth_failed', __('<b>Login Error:</b> Invalid domain username or password.', 'sanch-multidomain-ldap-auth'));
     }
 
     if (empty($ad_data['role'])) {
-        return new WP_Error('ad_auth_denied', __('<b>Access Denied:</b> Your AD account does not belong to any allowed intranet groups.', 'ad-multidomain-auth'));
+        return new WP_Error('ad_auth_denied', __('<b>Access Denied:</b> Your AD account does not belong to any allowed intranet groups.', 'sanch-multidomain-ldap-auth'));
     }
 
     $scoped_username = $clean_username . '@' . strtolower($ad_data['domain']);
@@ -270,6 +273,7 @@ function ad_multidomain_authenticate($user, $username, $password) {
             error_log("[AD Auth Notice] Email conflict for {$wp_username}. Fallback email assigned.");
         }
         
+        // JIT Provisioning: Create local WP account upon successful Active Directory bind.
         $user_id = wp_create_user($wp_username, wp_generate_password(24), $ad_data['email']);
         if (is_wp_error($user_id)) {
             error_log("[AD Auth Error] Failed to create WP account {$wp_username}: " . $user_id->get_error_message());
@@ -311,7 +315,9 @@ function ad_multidomain_authenticate($user, $username, $password) {
         }
     }
 
-    $client_ip = $_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN';
+    // SEC-GUARD: Validate IP before writing audit log to prevent log injection
+    $raw_ip    = $_SERVER['REMOTE_ADDR'] ?? '';
+    $client_ip = filter_var($raw_ip, FILTER_VALIDATE_IP) ? $raw_ip : 'UNKNOWN';
     error_log("[AD Auth Audit] ✅ Successful login: User {$wp_username} ({$ad_data['email']}) from IP {$client_ip}");
 
     return new WP_User($wp_user->ID);
@@ -361,7 +367,7 @@ function ad_auth_rest_filter_content_acl($response, $post, $request) {
     
     $url = get_permalink($post->ID);
     if (!ad_auth_user_can_access_url($url)) {
-        return new WP_Error('rest_forbidden_acl', __('403 Forbidden: Content access restricted by AD ACL.', 'ad-multidomain-auth'), ['status' => 403]);
+        return new WP_Error('rest_forbidden_acl', __('403 Forbidden: Content access restricted by AD ACL.', 'sanch-multidomain-ldap-auth'), ['status' => 403]);
     }
     return $response;
 }
@@ -460,11 +466,11 @@ function ad_auth_access_control() {
     if (!ad_auth_user_can_access_url($clean_uri)) {
         wp_die(
             '<div style="max-width:600px; margin:50px auto; font-family:sans-serif; text-align:center; padding:30px; border:1px solid #ddd; border-radius:8px; background:#fff;">' .
-            '<h1 style="color:#d63638; margin-top:0;">' . esc_html__('403 Forbidden', 'ad-multidomain-auth') . '</h1>' .
-            '<p style="font-size:16px; color:#555;">' . esc_html__('Your account does not have permission to view this intranet section.', 'ad-multidomain-auth') . '</p>' .
-            '<p style="margin-top:25px;"><a href="' . esc_url(home_url()) . '" style="background:#2271b1; color:#fff; text-decoration:none; padding:10px 20px; border-radius:4px; font-weight:bold;">' . esc_html__('Return to Home', 'ad-multidomain-auth') . '</a></p>' .
+            '<h1 style="color:#d63638; margin-top:0;">' . esc_html__('403 Forbidden', 'sanch-multidomain-ldap-auth') . '</h1>' .
+            '<p style="font-size:16px; color:#555;">' . esc_html__('Your account does not have permission to view this intranet section.', 'sanch-multidomain-ldap-auth') . '</p>' .
+            '<p style="margin-top:25px;"><a href="' . esc_url(home_url()) . '" style="background:#2271b1; color:#fff; text-decoration:none; padding:10px 20px; border-radius:4px; font-weight:bold;">' . esc_html__('Return to Home', 'sanch-multidomain-ldap-auth') . '</a></p>' .
             '</div>',
-            esc_html__('Access Denied', 'ad-multidomain-auth'),
+            esc_html__('Access Denied', 'sanch-multidomain-ldap-auth'),
             ['response' => 403]
         );
     }
@@ -533,11 +539,11 @@ function ad_auth_rest_access_control($result) {
     
     $uri = $_SERVER['REQUEST_URI'] ?? '';
     if (!is_user_logged_in() && strpos($uri, '/wp-json/') !== false) {
-        return new WP_Error('rest_forbidden', __('REST API access is restricted for guests.', 'ad-multidomain-auth'), ['status' => 401]);
+        return new WP_Error('rest_forbidden', __('REST API access is restricted for guests.', 'sanch-multidomain-ldap-auth'), ['status' => 401]);
     }
     
     if (is_user_logged_in() && !current_user_can('manage_options') && strpos($uri, '/wp-json/wp/v2/users') !== false) {
-        return new WP_Error('rest_forbidden_users', __('403 Forbidden: User enumeration is disabled.', 'ad-multidomain-auth'), ['status' => 403]);
+        return new WP_Error('rest_forbidden_users', __('403 Forbidden: User enumeration is disabled.', 'sanch-multidomain-ldap-auth'), ['status' => 403]);
     }
     
     return $result;
@@ -545,23 +551,105 @@ function ad_auth_rest_access_control($result) {
 
 function ad_auth_block_feeds() {
     if (!is_user_logged_in()) {
-        wp_die(esc_html__('RSS feeds are disabled for the intranet portal.', 'ad-multidomain-auth'), esc_html__('Access Denied', 'ad-multidomain-auth'), ['response' => 403]);
+        wp_die(esc_html__('RSS feeds are disabled for the intranet portal.', 'sanch-multidomain-ldap-auth'), esc_html__('Access Denied', 'sanch-multidomain-ldap-auth'), ['response' => 403]);
     }
 }
 
 // ============================================================================
-// 3. ADMIN SETTINGS UI
+// 3. ADMIN SETTINGS UI & ASSET ENQUEUEING
 // ============================================================================
 add_action('admin_menu', 'ad_auth_add_admin_menu');
 
 function ad_auth_add_admin_menu() {
-    add_options_page(
-        __('AD Multi-Domain Auth & ACL', 'ad-multidomain-auth'), 
-        __('AD Auth Settings', 'ad-multidomain-auth'), 
+    $hook_suffix = add_options_page(
+        __('AD Multi-Domain Auth & ACL', 'sanch-multidomain-ldap-auth'), 
+        __('AD Auth Settings', 'sanch-multidomain-ldap-auth'), 
         'manage_options', 
         'ad_multi_auth', 
         'ad_auth_options_page'
     );
+
+    // SEC-GUARD: Enqueue administrative JS inline via proper WordPress API
+    add_action('admin_enqueue_scripts', function($hook) use ($hook_suffix) {
+        if ($hook !== $hook_suffix) return;
+
+        $custom_js = "
+        document.addEventListener('DOMContentLoaded', function() {
+            var strAuto = '" . esc_js(__('Auto: ', 'sanch-multidomain-ldap-auth')) . "';
+            var strLeave = '" . esc_js(__('Leave empty for auto-generation', 'sanch-multidomain-ldap-auth')) . "';
+            var strWarn = '" . esc_js(__('Cannot remove the last row!', 'sanch-multidomain-ldap-auth')) . "';
+
+            document.body.addEventListener('click', function(e) {
+                if (e.target && e.target.classList.contains('remove-row')) {
+                    var row = e.target.closest('tr');
+                    if (row && row.parentNode.rows.length > 1) {
+                        row.remove();
+                    } else {
+                        alert(strWarn);
+                    }
+                }
+            });
+
+            document.getElementById('add-server').addEventListener('click', function() {
+                var tbody = document.getElementById('servers-body');
+                var newRow = tbody.rows[0].cloneNode(true);
+                newRow.querySelectorAll('input[type=\"text\"]').forEach(function(input) { input.value = ''; });
+                newRow.querySelector('select[name=\"servers_enc[]\"]').selectedIndex = 1; 
+                
+                var baseDnInput = newRow.querySelector('input[name=\"servers_base_dn[]\"]');
+                if(baseDnInput) baseDnInput.placeholder = strLeave;
+                
+                tbody.appendChild(newRow);
+            });
+
+            document.getElementById('add-mapping').addEventListener('click', function() {
+                var tbody = document.getElementById('mapping-body');
+                var newRow = tbody.rows[0].cloneNode(true);
+                
+                newRow.querySelectorAll('input[type=\"text\"]:not(.custom-role-input)').forEach(function(input) { input.value = ''; });
+                
+                var roleSelect = newRow.querySelector('.wp-role-select');
+                var customInput = newRow.querySelector('.custom-role-input');
+                
+                if(roleSelect && customInput) {
+                    roleSelect.selectedIndex = 0;
+                    customInput.style.display = 'none';
+                    customInput.value = '';
+                }
+                
+                newRow.querySelector('select[name=\"map_wp_base[]\"]').selectedIndex = 0;
+                
+                var helperSelect = newRow.querySelector('.url-path-helper');
+                if(helperSelect) helperSelect.selectedIndex = 0;
+                
+                tbody.appendChild(newRow);
+            });
+
+            document.addEventListener('input', function(e) {
+                if (e.target && e.target.name === 'servers_domain[]') {
+                    var row = e.target.closest('tr');
+                    var baseDnInput = row.querySelector('input[name=\"servers_base_dn[]\"]');
+                    var domainVal = e.target.value.trim();
+                    
+                    if (domainVal && baseDnInput) {
+                        var autoDn = 'DC=' + domainVal.split('.').join(',DC=');
+                        baseDnInput.placeholder = strAuto + autoDn;
+                    } else if (baseDnInput) {
+                        baseDnInput.placeholder = strLeave;
+                    }
+                }
+            });
+
+            document.querySelectorAll('input[name=\"servers_domain[]\"]').forEach(function(inp) {
+                inp.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+        });
+        ";
+
+        wp_register_script('ad-auth-admin-script', false, [], '1.0.0', true);
+        wp_enqueue_script('ad-auth-admin-script');
+        wp_add_inline_script('ad-auth-admin-script', $custom_js);
+    });
 }
 
 function ad_auth_options_page() {
@@ -647,14 +735,14 @@ function ad_auth_options_page() {
         delete_transient('ad_auth_roles_healed');
         update_option('ad_auth_settings', $new_options);
         
-        echo '<div class="updated"><p><strong>' . esc_html__('Settings successfully saved.', 'ad-multidomain-auth') . '</strong></p></div>';
+        echo '<div class="updated"><p><strong>' . esc_html__('Settings successfully saved.', 'sanch-multidomain-ldap-auth') . '</strong></p></div>';
         if ($dropped_rows > 0) {
-            echo '<div class="notice notice-warning is-dismissible"><p><strong>' . esc_html__('Warning:', 'ad-multidomain-auth') . '</strong> ' . sprintf(esc_html__('%d incomplete rule(s) were dropped (missing AD group or empty custom role ID).', 'ad-multidomain-auth'), intval($dropped_rows)) . '</p></div>';
+            echo '<div class="notice notice-warning is-dismissible"><p><strong>' . esc_html__('Warning:', 'sanch-multidomain-ldap-auth') . '</strong> ' . sprintf(esc_html__('%d incomplete rule(s) were dropped (missing AD group or empty custom role ID).', 'sanch-multidomain-ldap-auth'), intval($dropped_rows)) . '</p></div>';
         }
     }
 
-    $options  = get_option('ad_auth_settings', []);
-    $servers  = !empty($options['servers']) ? array_filter($options['servers']) : [['ip' => '', 'enc' => 'starttls', 'domain' => '', 'base_dn' => '']];
+    $options     = get_option('ad_auth_settings', []);
+    $servers     = !empty($options['servers']) ? array_filter($options['servers']) : [['ip' => '', 'enc' => 'starttls', 'domain' => '', 'base_dn' => '']];
     $raw_mapping = !empty($options['role_mapping']) ? $options['role_mapping'] : [['ad_group' => 'Domain_Admins', 'wp_slug' => 'administrator', 'wp_base' => 'administrator', 'url_path' => '']];
     
     $mapping = [];
@@ -673,15 +761,15 @@ function ad_auth_options_page() {
     $site_pages = get_pages(['sort_column' => 'post_title', 'hierarchical' => 1]);
     $site_cats  = get_terms(['taxonomy' => 'category', 'hide_empty' => false]);
     
-    $sections_options_html = '<option value="">' . esc_html__('➕ Append path from site catalog...', 'ad-multidomain-auth') . '</option>';
+    $sections_options_html = '<option value="">' . esc_html__('➕ Append path from site catalog...', 'sanch-multidomain-ldap-auth') . '</option>';
     foreach ($site_pages as $p) {
         $path = rawurldecode(parse_url(get_permalink($p->ID), PHP_URL_PATH));
-        $sections_options_html .= '<option value="' . esc_attr($path) . '">' . esc_html__('📄 Page:', 'ad-multidomain-auth') . ' ' . esc_html(trim($p->post_title)) . ' (' . esc_html($path) . ')</option>';
+        $sections_options_html .= '<option value="' . esc_attr($path) . '">' . esc_html__('📄 Page:', 'sanch-multidomain-ldap-auth') . ' ' . esc_html(trim($p->post_title)) . ' (' . esc_html($path) . ')</option>';
     }
     if (!is_wp_error($site_cats) && !empty($site_cats)) {
         foreach ($site_cats as $c) {
             $path = rawurldecode(parse_url(get_term_link($c), PHP_URL_PATH));
-            $sections_options_html .= '<option value="' . esc_attr($path) . '">' . esc_html__('📁 Category:', 'ad-multidomain-auth') . ' ' . esc_html(trim($c->name)) . ' (' . esc_html($path) . ')</option>';
+            $sections_options_html .= '<option value="' . esc_attr($path) . '">' . esc_html__('📁 Category:', 'sanch-multidomain-ldap-auth') . ' ' . esc_html(trim($c->name)) . ' (' . esc_html($path) . ')</option>';
         }
     }
     
@@ -690,9 +778,9 @@ function ad_auth_options_page() {
         if (empty($s['ip'])) continue;
         $enc = !empty($s['enc']) ? $s['enc'] : 'plain';
         if (empty($s['enc'])) {
-             if (!empty($s['use_tls'])) $enc = 'starttls';
-             elseif (!empty($s['proto']) && $s['proto'] === 'ldaps://') $enc = 'ldaps';
-             elseif (!empty($s['port']) && $s['port'] == 636) $enc = 'ldaps';
+            if (!empty($s['use_tls'])) $enc = 'starttls';
+            elseif (!empty($s['proto']) && $s['proto'] === 'ldaps://') $enc = 'ldaps';
+            elseif (!empty($s['port']) && $s['port'] == 636) $enc = 'ldaps';
         }
         if ($enc === 'plain') {
             $tls_warning = true;
@@ -701,25 +789,25 @@ function ad_auth_options_page() {
     }
     ?>
     <div class="wrap">
-        <h1><?php esc_html_e('Active Directory Multi-Domain & ACL Settings', 'ad-multidomain-auth'); ?></h1>
+        <h1><?php esc_html_e('Active Directory Multi-Domain & ACL Settings', 'sanch-multidomain-ldap-auth'); ?></h1>
         
         <?php if ($tls_warning): ?>
         <div class="notice notice-warning is-dismissible">
-            <p><strong><?php esc_html_e('Security Warning:', 'ad-multidomain-auth'); ?></strong> <?php esc_html_e('Found domain controllers with disabled encryption. Authentication transmits passwords in plaintext.', 'ad-multidomain-auth'); ?></p>
+            <p><strong><?php esc_html_e('Security Warning:', 'sanch-multidomain-ldap-auth'); ?></strong> <?php esc_html_e('Found domain controllers with disabled encryption. Authentication transmits passwords in plaintext.', 'sanch-multidomain-ldap-auth'); ?></p>
         </div>
         <?php endif; ?>
 
         <form method="post" action="">
             <?php wp_nonce_field('ad_auth_save'); ?>
             
-            <h2><?php esc_html_e('1. Domain Controllers (DC)', 'ad-multidomain-auth'); ?></h2>
+            <h2><?php esc_html_e('1. Domain Controllers (DC)', 'sanch-multidomain-ldap-auth'); ?></h2>
             <table class="widefat fixed" id="servers-table" style="margin-bottom: 10px;">
                 <thead>
                     <tr>
-                        <th style="width: 22%;"><?php esc_html_e('Protocol & Encryption', 'ad-multidomain-auth'); ?></th>
-                        <th style="width: 20%;"><?php esc_html_e('IP Address (or IP:Port)', 'ad-multidomain-auth'); ?></th>
-                        <th style="width: 22%;"><?php esc_html_e('Domain (UPN Suffix)', 'ad-multidomain-auth'); ?></th>
-                        <th style="width: 31%;"><?php esc_html_e('Base DN', 'ad-multidomain-auth'); ?> <span style="font-weight:normal; color:#666;">(<?php esc_html_e('Leave empty for auto-generation', 'ad-multidomain-auth'); ?>)</span></th>
+                        <th style="width: 22%;"><?php esc_html_e('Protocol & Encryption', 'sanch-multidomain-ldap-auth'); ?></th>
+                        <th style="width: 20%;"><?php esc_html_e('IP Address (or IP:Port)', 'sanch-multidomain-ldap-auth'); ?></th>
+                        <th style="width: 22%;"><?php esc_html_e('Domain (UPN Suffix)', 'sanch-multidomain-ldap-auth'); ?></th>
+                        <th style="width: 31%;"><?php esc_html_e('Base DN', 'sanch-multidomain-ldap-auth'); ?> <span style="font-weight:normal; color:#666;">(<?php esc_html_e('Leave empty for auto-generation', 'sanch-multidomain-ldap-auth'); ?>)</span></th>
                         <th style="width: 5%;"></th>
                     </tr>
                 </thead>
@@ -737,32 +825,32 @@ function ad_auth_options_page() {
                     <tr>
                         <td>
                             <select name="servers_enc[]" class="widefat">
-                                <option value="plain" <?php selected($enc, 'plain'); ?>><?php esc_html_e('LDAP (Plaintext, 389)', 'ad-multidomain-auth'); ?></option>
-                                <option value="starttls" <?php selected($enc, 'starttls'); ?>><?php esc_html_e('LDAP + StartTLS (Encrypted, 389)', 'ad-multidomain-auth'); ?></option>
-                                <option value="ldaps" <?php selected($enc, 'ldaps'); ?>><?php esc_html_e('LDAPS (SSL Tunnel, 636)', 'ad-multidomain-auth'); ?></option>
+                                <option value="plain" <?php selected($enc, 'plain'); ?>><?php esc_html_e('LDAP (Plaintext, 389)', 'sanch-multidomain-ldap-auth'); ?></option>
+                                <option value="starttls" <?php selected($enc, 'starttls'); ?>><?php esc_html_e('LDAP + StartTLS (Encrypted, 389)', 'sanch-multidomain-ldap-auth'); ?></option>
+                                <option value="ldaps" <?php selected($enc, 'ldaps'); ?>><?php esc_html_e('LDAPS (SSL Tunnel, 636)', 'sanch-multidomain-ldap-auth'); ?></option>
                             </select>
                         </td>
-                        <td><input type="text" name="servers_ip[]" value="<?php echo esc_attr(str_replace(['ldap://', 'ldaps://'], '', $srv['ip'] ?? '')); ?>" class="widefat" placeholder="<?php esc_attr_e('e.g. 10.0.0.1 or 10.0.0.1:389', 'ad-multidomain-auth'); ?>" /></td>
-                        <td><input type="text" name="servers_domain[]" value="<?php echo esc_attr($srv['domain'] ?? ''); ?>" class="widefat" placeholder="<?php esc_attr_e('e.g. corp.company.com', 'ad-multidomain-auth'); ?>" /></td>
-                        <td><input type="text" name="servers_base_dn[]" value="<?php echo esc_attr($srv['base_dn'] ?? ''); ?>" class="widefat" placeholder="<?php esc_attr_e('Leave empty for auto-generation', 'ad-multidomain-auth'); ?>" /></td>
+                        <td><input type="text" name="servers_ip[]" value="<?php echo esc_attr(str_replace(['ldap://', 'ldaps://'], '', $srv['ip'] ?? '')); ?>" class="widefat" placeholder="<?php esc_attr_e('e.g. 10.0.0.1 or 10.0.0.1:389', 'sanch-multidomain-ldap-auth'); ?>" /></td>
+                        <td><input type="text" name="servers_domain[]" value="<?php echo esc_attr($srv['domain'] ?? ''); ?>" class="widefat" placeholder="<?php esc_attr_e('e.g. corp.company.com', 'sanch-multidomain-ldap-auth'); ?>" /></td>
+                        <td><input type="text" name="servers_base_dn[]" value="<?php echo esc_attr($srv['base_dn'] ?? ''); ?>" class="widefat" placeholder="<?php esc_attr_e('Leave empty for auto-generation', 'sanch-multidomain-ldap-auth'); ?>" /></td>
                         <td><button type="button" class="button remove-row">×</button></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
             </table>
-            <button type="button" class="button button-secondary" id="add-server"><?php esc_html_e('+ Add Server', 'ad-multidomain-auth'); ?></button>
+            <button type="button" class="button button-secondary" id="add-server"><?php esc_html_e('+ Add Server', 'sanch-multidomain-ldap-auth'); ?></button>
 
-            <h2 style="margin-top: 30px;"><?php esc_html_e('2. AD Groups Mapping, Roles & ACL Rules (Zero-Trust Mode)', 'ad-multidomain-auth'); ?></h2>
-            <p class="description"><?php esc_html_e('If a user does not belong to any mapped AD group, access is denied. REST API and write permissions are protected by the same routing paths.', 'ad-multidomain-auth'); ?><br>
-            <?php esc_html_e('Select a target URL path from the dropdown to automatically append it (comma-separated list).', 'ad-multidomain-auth'); ?></p>
+            <h2 style="margin-top: 30px;"><?php esc_html_e('2. AD Groups Mapping, Roles & ACL Rules (Zero-Trust Mode)', 'sanch-multidomain-ldap-auth'); ?></h2>
+            <p class="description"><?php esc_html_e('If a user does not belong to any mapped AD group, access is denied. REST API and write permissions are protected by the same routing paths.', 'sanch-multidomain-ldap-auth'); ?><br>
+            <?php esc_html_e('Select a target URL path from the dropdown to automatically append it (comma-separated list).', 'sanch-multidomain-ldap-auth'); ?></p>
 
             <table class="widefat fixed" id="mapping-table" style="max-width: 1050px; margin-bottom: 10px;">
                 <thead>
                     <tr>
-                        <th style="width: 22%;"><?php esc_html_e('AD Group Name (CN)', 'ad-multidomain-auth'); ?></th>
-                        <th style="width: 22%;"><?php esc_html_e('WP Role Code (ID / Slug)', 'ad-multidomain-auth'); ?></th>
-                        <th style="width: 16%;"><?php esc_html_e('Capabilities (Base Role)', 'ad-multidomain-auth'); ?></th>
-                        <th style="width: 35%;"><?php esc_html_e('Allowed URL Path (Comma separated)', 'ad-multidomain-auth'); ?></th>
+                        <th style="width: 22%;"><?php esc_html_e('AD Group Name (CN)', 'sanch-multidomain-ldap-auth'); ?></th>
+                        <th style="width: 22%;"><?php esc_html_e('WP Role Code (ID / Slug)', 'sanch-multidomain-ldap-auth'); ?></th>
+                        <th style="width: 16%;"><?php esc_html_e('Capabilities (Base Role)', 'sanch-multidomain-ldap-auth'); ?></th>
+                        <th style="width: 35%;"><?php esc_html_e('Allowed URL Path (Comma separated)', 'sanch-multidomain-ldap-auth'); ?></th>
                         <th style="width: 5%;"></th>
                     </tr>
                 </thead>
@@ -772,7 +860,7 @@ function ad_auth_options_page() {
                     ?>
                     <tr>
                         <td style="vertical-align:top;">
-                            <input type="text" name="map_ad_group[]" value="<?php echo esc_attr($row['ad_group']); ?>" class="widefat" placeholder="<?php esc_attr_e('e.g. Domain_Admins', 'ad-multidomain-auth'); ?>" style="margin-top:2px;" />
+                            <input type="text" name="map_ad_group[]" value="<?php echo esc_attr($row['ad_group']); ?>" class="widefat" placeholder="<?php esc_attr_e('e.g. Domain_Admins', 'sanch-multidomain-ldap-auth'); ?>" style="margin-top:2px;" />
                         </td>
                         <td style="vertical-align:top;">
                             <select name="map_wp_slug[]" class="widefat wp-role-select" style="margin-top:2px;" onchange="if(this.value==='_custom_'){ this.nextElementSibling.style.display='block'; this.nextElementSibling.focus(); } else { this.nextElementSibling.style.display='none'; }">
@@ -786,20 +874,20 @@ function ad_auth_options_page() {
                                 <?php if (!$is_known && !empty($current_slug)): ?>
                                     <option value="<?php echo esc_attr($current_slug); ?>" selected><?php echo esc_html($current_slug); ?></option>
                                 <?php endif; ?>
-                                <option value="_custom_"><?php esc_html_e('➕ Enter Custom ID...', 'ad-multidomain-auth'); ?></option>
+                                <option value="_custom_"><?php esc_html_e('➕ Enter Custom ID...', 'sanch-multidomain-ldap-auth'); ?></option>
                             </select>
-                            <input type="text" name="map_wp_slug_custom[]" class="widefat custom-role-input" style="display:none; margin-top:5px;" placeholder="<?php esc_attr_e('e.g. operator_kyiv', 'ad-multidomain-auth'); ?>" />
+                            <input type="text" name="map_wp_slug_custom[]" class="widefat custom-role-input" style="display:none; margin-top:5px;" placeholder="<?php esc_attr_e('e.g. operator_kyiv', 'sanch-multidomain-ldap-auth'); ?>" />
                         </td>
                         <td style="vertical-align:top;">
                             <select name="map_wp_base[]" class="widefat" style="margin-top:2px;">
-                                <option value="subscriber" <?php selected($row['wp_base'] ?? 'subscriber', 'subscriber'); ?>><?php esc_html_e('Subscriber (Read Only)', 'ad-multidomain-auth'); ?></option>
-                                <option value="editor" <?php selected($row['wp_base'] ?? 'subscriber', 'editor'); ?>><?php esc_html_e('Editor (Content Mgmt)', 'ad-multidomain-auth'); ?></option>
-                                <option value="author" <?php selected($row['wp_base'] ?? 'subscriber', 'author'); ?>><?php esc_html_e('Author (Own Posts)', 'ad-multidomain-auth'); ?></option>
-                                <option value="administrator" <?php selected($row['wp_base'] ?? 'subscriber', 'administrator'); ?>><?php esc_html_e('Administrator', 'ad-multidomain-auth'); ?></option>
+                                <option value="subscriber" <?php selected($row['wp_base'] ?? 'subscriber', 'subscriber'); ?>><?php esc_html_e('Subscriber (Read Only)', 'sanch-multidomain-ldap-auth'); ?></option>
+                                <option value="editor" <?php selected($row['wp_base'] ?? 'subscriber', 'editor'); ?>><?php esc_html_e('Editor (Content Mgmt)', 'sanch-multidomain-ldap-auth'); ?></option>
+                                <option value="author" <?php selected($row['wp_base'] ?? 'subscriber', 'author'); ?>><?php esc_html_e('Author (Own Posts)', 'sanch-multidomain-ldap-auth'); ?></option>
+                                <option value="administrator" <?php selected($row['wp_base'] ?? 'subscriber', 'administrator'); ?>><?php esc_html_e('Administrator', 'sanch-multidomain-ldap-auth'); ?></option>
                             </select>
                         </td>
                         <td style="vertical-align:top;">
-                            <input type="text" name="map_url_path[]" value="<?php echo esc_attr(rawurldecode($row['url_path'] ?? '')); ?>" class="widefat url-path-input" placeholder="<?php esc_attr_e('/sections/kyiv/, /docs/', 'ad-multidomain-auth'); ?>" style="margin-top:2px;" />
+                            <input type="text" name="map_url_path[]" value="<?php echo esc_attr(rawurldecode($row['url_path'] ?? '')); ?>" class="widefat url-path-input" placeholder="<?php esc_attr_e('/sections/kyiv/, /docs/', 'sanch-multidomain-ldap-auth'); ?>" style="margin-top:2px;" />
                             <select class="widefat url-path-helper" style="margin-top:4px; font-size:12px; color:#2271b1; border-color:#2271b1;" onchange="if(this.value){ var inp = this.parentNode.querySelector('.url-path-input'); var val = inp.value.trim().replace(/,$/, ''); inp.value = val ? val + ', ' + this.value : this.value; this.selectedIndex = 0; }">
                                 <?php echo $sections_options_html; ?>
                             </select>
@@ -809,99 +897,26 @@ function ad_auth_options_page() {
                     <?php endforeach; ?>
                 </tbody>
             </table>
-            <button type="button" class="button button-secondary" id="add-mapping"><?php esc_html_e('+ Add Rule', 'ad-multidomain-auth'); ?></button>
+            <button type="button" class="button button-secondary" id="add-mapping"><?php esc_html_e('+ Add Rule', 'sanch-multidomain-ldap-auth'); ?></button>
 
-            <h2 style="margin-top: 30px;"><?php esc_html_e('3. Global Policy (SSOT)', 'ad-multidomain-auth'); ?></h2>
+            <h2 style="margin-top: 30px;"><?php esc_html_e('3. Global Policy (SSOT)', 'sanch-multidomain-ldap-auth'); ?></h2>
             <table class="form-table">
                 <tr>
-                    <th scope="row"><?php esc_html_e('AD as Single Source of Truth:', 'ad-multidomain-auth'); ?></th>
+                    <th scope="row"><?php esc_html_e('AD as Single Source of Truth:', 'sanch-multidomain-ldap-auth'); ?></th>
                     <td>
                         <label>
                             <input type="checkbox" name="enforce_ad_role" value="1" <?php checked($enforce_ad_role, 1); ?> />
-                            <strong><?php esc_html_e('Overwrite WordPress role on every login', 'ad-multidomain-auth'); ?></strong>
+                            <strong><?php esc_html_e('Overwrite WordPress role on every login', 'sanch-multidomain-ldap-auth'); ?></strong>
                         </label>
-                        <p class="description"><?php esc_html_e('If enabled, manual WP role changes are discarded, and the role is synced from AD mapping every time a user logs in.', 'ad-multidomain-auth'); ?></p>
+                        <p class="description"><?php esc_html_e('If enabled, manual WP role changes are discarded, and the role is synced from AD mapping every time a user logs in.', 'sanch-multidomain-ldap-auth'); ?></p>
                     </td>
                 </tr>
             </table>
 
             <p class="submit">
-                <input type="submit" name="ad_auth_submit" id="submit" class="button button-primary" value="<?php esc_attr_e('Save Settings', 'ad-multidomain-auth'); ?>">
+                <input type="submit" name="ad_auth_submit" id="submit" class="button button-primary" value="<?php esc_attr_e('Save Settings', 'sanch-multidomain-ldap-auth'); ?>">
             </p>
         </form>
     </div>
-
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        var strAuto = '<?php echo esc_js(__('Auto: ', 'ad-multidomain-auth')); ?>';
-        var strLeave = '<?php echo esc_js(__('Leave empty for auto-generation', 'ad-multidomain-auth')); ?>';
-        var strWarn = '<?php echo esc_js(__('Cannot remove the last row!', 'ad-multidomain-auth')); ?>';
-
-        document.body.addEventListener('click', function(e) {
-            if (e.target && e.target.classList.contains('remove-row')) {
-                var row = e.target.closest('tr');
-                if (row && row.parentNode.rows.length > 1) {
-                    row.remove();
-                } else {
-                    alert(strWarn);
-                }
-            }
-        });
-
-        document.getElementById('add-server').addEventListener('click', function() {
-            var tbody = document.getElementById('servers-body');
-            var newRow = tbody.rows[0].cloneNode(true);
-            newRow.querySelectorAll('input[type="text"]').forEach(input => input.value = '');
-            newRow.querySelector('select[name="servers_enc[]"]').selectedIndex = 1; 
-            
-            var baseDnInput = newRow.querySelector('input[name="servers_base_dn[]"]');
-            if(baseDnInput) baseDnInput.placeholder = strLeave;
-            
-            tbody.appendChild(newRow);
-        });
-
-        document.getElementById('add-mapping').addEventListener('click', function() {
-            var tbody = document.getElementById('mapping-body');
-            var newRow = tbody.rows[0].cloneNode(true);
-            
-            newRow.querySelectorAll('input[type="text"]:not(.custom-role-input)').forEach(input => input.value = '');
-            
-            var roleSelect = newRow.querySelector('.wp-role-select');
-            var customInput = newRow.querySelector('.custom-role-input');
-            
-            if(roleSelect && customInput) {
-                roleSelect.selectedIndex = 0;
-                customInput.style.display = 'none';
-                customInput.value = '';
-            }
-            
-            newRow.querySelector('select[name="map_wp_base[]"]').selectedIndex = 0;
-            
-            var helperSelect = newRow.querySelector('.url-path-helper');
-            if(helperSelect) helperSelect.selectedIndex = 0;
-            
-            tbody.appendChild(newRow);
-        });
-
-        document.addEventListener('input', function(e) {
-            if (e.target && e.target.name === 'servers_domain[]') {
-                var row = e.target.closest('tr');
-                var baseDnInput = row.querySelector('input[name="servers_base_dn[]"]');
-                var domainVal = e.target.value.trim();
-                
-                if (domainVal && baseDnInput) {
-                    var autoDn = 'DC=' + domainVal.split('.').join(',DC=');
-                    baseDnInput.placeholder = strAuto + autoDn;
-                } else if (baseDnInput) {
-                    baseDnInput.placeholder = strLeave;
-                }
-            }
-        });
-
-        document.querySelectorAll('input[name="servers_domain[]"]').forEach(function(inp) {
-            inp.dispatchEvent(new Event('input', { bubbles: true }));
-        });
-    });
-    </script>
     <?php
 }
