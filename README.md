@@ -1,6 +1,6 @@
-# Active Directory Multi-Domain Auth & ACL for WordPress
+# Sanch MultiDomain LDAP Auth for Active Directory
 
-[![WordPress Plugin Directory](https://img.shields.io/badge/WordPress.org-Awaiting_Review-blue.svg)](https://wordpress.org/plugins/active-directory-multi-domain-auth-acl/)
+[![WordPress Plugin Directory](https://img.shields.io/badge/WordPress.org-Awaiting_Review-blue.svg)](https://wordpress.org/plugins/sanch-multidomain-ldap-auth/)
 [![PHP Version](https://img.shields.io/badge/PHP-%3E%3D%207.4-777BB4.svg)](https://www.php.net/)
 [![License: GPL v2](https://img.shields.io/badge/License-GPL%20v2-blue.svg)](https://www.gnu.org/licenses/gpl-2.0.html)
 
@@ -24,17 +24,17 @@ Enterprise-grade Active Directory multi-domain authentication, dynamic role mapp
 
 1. Clone or download this repository into your `/wp-content/plugins/` directory:
    ```bash
-   git clone [https://github.com/sanchshevchuk/active-directory-multi-domain-auth-acl.git](https://github.com/sanchshevchuk/active-directory-multi-domain-auth-acl.git)
+   git clone [https://github.com/sanchshevchuk/sanch-multidomain-ldap-auth.git](https://github.com/sanchshevchuk/sanch-multidomain-ldap-auth.git)
 Activate the plugin via WordPress Admin -> Plugins.
 
 Navigate to Settings -> AD Auth Settings to configure your Domain Controllers and Group Mappings.
 
 Security & Architecture
-Input Sanitization & Escaping: Built adhering to strict WordPress Coding Standards (wp_unslash, strict nonces, and output escaping).
+Input Sanitization & Escaping: Built adhering to strict WordPress Coding Standards (wp_unslash, strict nonces, IP validation/sanitization, and proper script enqueueing).
 
-i18n Ready: Fully internationalized with native text domain support (active-directory-multi-domain-auth-acl).
+i18n Ready: Fully internationalized with native text domain support (sanch-multidomain-ldap-auth).
 
 Single Source of Truth (SSOT): Option to overwrite WordPress user roles dynamically upon every successful AD login.
 
 License
-This project is licensed under the GPLv2 or later - see the LICENSE file for details.
+This project is licensed under the GPLv2 or later — see the LICENSE file for details.
